@@ -2,165 +2,168 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
-| Version | 0.1 |
-| Scope owner | This document owns scheduling, assignment, daily reporting, evidence capture, blockers, verification, and the field-facing experience |
-| Requirement source | [`../PRD.md`](../PRD.md) §6.5, §9.2, §9.11 |
+| Status | Target design |
+| Version | 0.2 — work sessions and verification reconciled 2026-10-25 |
+| Scope owner | Scheduling, assignment, **work sessions**, daily reporting, evidence, blockers, completion verification, WhatsApp preparation, field UX |
+| Requirement source | [`../PRD.md`](../PRD.md) §6.5, §9.2, §9.11, §9.14, §9.15, §6.11 |
 | Related | [`./PROJECT_LIFECYCLE.md`](./PROJECT_LIFECYCLE.md) (project and work-order state machines) |
 
 ---
 
 ## 1. Confirmed reality
 
-**[Confirmed]:**
+**[Confirmed]:** ~15 technicians · the owner assigns per project, one technician or a larger team · projects span multiple days with work happening in discrete sessions · technicians currently report via **WhatsApp groups**.
 
-- ~15 technicians.
-- The owner assigns technicians per project requirement — **one technician or a larger team**.
-- Projects can span **multiple days**.
-- Technicians currently report progress via **WhatsApp groups**.
-
-**[Assumption]** A-01: technicians have smartphones with a modern browser and intermittent mobile data at customer sites. If false, the entire field-facing design fails and a native/offline approach becomes necessary. This is the single assumption most worth validating early (Phase 0).
-
-### 1.1 What WhatsApp does well, and what it fails at
-
-Understanding this determines what the replacement must preserve.
+**[Assumption]** A-01: technicians have smartphones with a modern browser and intermittent mobile data. If false, the field design fails and a native/offline approach becomes necessary. The single assumption most worth validating early (Phase 0).
 
 | WhatsApp does well | WhatsApp fails at |
 |---|---|
-| Zero training | No structure — a report is a paragraph |
-| Instant, familiar | No history beyond scrollback |
+| Zero training; instant; familiar | No structure — a report is a paragraph |
 | Photos are trivial | No link between a photo and a work order |
-| Works on any phone | No status, no verification, no audit |
-| Group visibility | No way to answer "which jobs are done?" |
-| — | No material usage record |
+| Works on any phone; group visibility | No status, no verification, no audit |
+| — | No way to answer "which jobs are done?" |
+| — | No record of when work actually started or ended |
 | — | Office must re-type everything into spreadsheets |
 
-**Design implication:** the replacement must be *at least as fast* as typing a WhatsApp message, or technicians will keep using WhatsApp and the office will keep transcribing. This is why M3 sets a hard target of **< 3 minutes on a phone** and why the reporting form is the most UX-critical screen in the product.
-
-**A successful UI action is not proof the system works** — but a slow UI is proof the system will not be used.
+**Design implication:** the replacement must be *at least as fast* as typing a WhatsApp message, or technicians will keep using WhatsApp. This is why M3 sets **< 3 minutes on a phone** and why the reporting form is the most UX-critical screen in the product. A successful UI action is not proof the system works — but a slow UI is proof it will not be used.
 
 ---
 
-## 2. Platform decision: mobile-first responsive web
+## 2. Platform: mobile-first PWA, online-first
 
-**[Proposed]** Mobile-first responsive web for MVP. Native application **[Out of Scope]** (Q-UX-01).
+**[Confirmed]** mobile-first responsive web with PWA support; native **[Out of Scope]** (Q-UX-01).
 
-### 2.1 Evaluation
-
-| Criterion | Mobile-first web | Native app |
+| Criterion | Mobile-first PWA | Native app |
 |---|---|---|
-| Time to first working version | Low | High (two codebases or a cross-platform framework) |
-| Distribution to 15 technicians | Send a link | App store, device compatibility, updates |
+| Time to first working version | Low | High |
+| Distribution to 15 technicians | Send a link | App store, device compatibility |
 | Update cycle | Deploy once | Store review, version fragmentation |
-| Photo capture | Browser file/camera input works on modern mobile browsers | Native, slightly better |
-| Weak-signal behaviour | Degrades; can add retry/queue | Better offline support |
+| Weak-signal behaviour | Degrades; local draft preserved | Better offline support |
+| Installability | Home-screen install via manifest | Native |
 | Push notifications | Not in MVP | Native |
-| Device hardware access | Sufficient (camera, GPS if ever needed) | Full |
 | Cost to maintain | Low | Materially higher |
 
-**Recommendation:** mobile-first responsive web, designed at 360 px width, with large touch targets (≥44 px), minimal page weight, and forms that survive a dropped connection by preserving entered data locally until submission succeeds.
+### 2.1 What the PWA does and does not do
 
-**Justification for rejecting native:** the confirmed need is *reporting progress*, which is a form plus photos. A native app would be justified by offline-first requirements or hardware access — neither is confirmed. Building two platforms for a 15-person team would consume the entire MVP budget and delay the business benefits that motivate the project.
+| Does (NFR-OPS-010) | Does **not** (deferred) |
+|---|---|
+| Installable to the home screen | Offline form submission |
+| Versioned static-asset caching | Background sync queue |
+| Safe cache versioning and update prompt | Cached authenticated pages or business data |
+| Local preservation of an in-progress draft | Guaranteed draft survival across logout or device change |
 
-**[Open Question] Q-UX-01** — revisit after pilot. **Decision trigger:** measured evidence that web reporting is materially slower or unreliable on technicians' actual devices and networks.
+**MVP is online-first.** The service worker caches only versioned static assets — **never** authenticated HTML or JSON, private files, or anything fetched with a session credential (FR-PWA-002, AC-PWA-002).
 
 ### 2.2 Field UX constraints
 
-| Constraint | Design response |
-|---|---|
-| 360 px viewport | Single-column layout; no horizontal scrolling; no data tables in field flows |
-| Touch input | ≥44 px targets; no hover-dependent interactions |
-| Weak/intermittent signal | Lightweight pages; form state preserved locally; explicit retry; no data loss on failure |
-| Bright sunlight | High contrast; avoid subtle grey-on-grey |
-| One-handed use | Primary actions within thumb reach |
-| Indonesian language | All labels, buttons, and messages in Indonesian (NFR-OPS-007) |
-| Limited data plan | Compress images client-side before upload; cap upload size |
-| Gloves/wet hands | Large buttons; avoid precision interactions |
+360 px single-column layout, no horizontal scroll, no data tables in field flows · ≥44 px touch targets, no hover-dependent interaction · lightweight pages, draft preserved locally, explicit retry, no silent data loss · high contrast for sunlight · primary actions within thumb reach · all labels and messages in Indonesian (NFR-OPS-007) · client-side image compression for limited data plans · large buttons for gloves and wet hands.
 
 ---
 
-## 3. Technician and team model
+## 3. Work sessions
 
-### 3.1 Records
+**A work session is a first-class entity (FR-TECH-011).** It answers "when did this technician actually work on this project?" — a question the current WhatsApp process cannot answer at all.
+
+### 3.1 Why a session, not just a report
+
+One start and one completion per project is **explicitly insufficient**: a three-day project with two technicians has at least six sessions, and a technician may work a morning and an evening on the same day. Project-level timestamps would force fabricated data and make duration reporting meaningless.
+
+A session is separate from the **daily report**: a report describes what was done; a session records that work was happening between two instants. One report may cover two sessions; two reports may fall within one long session.
+
+### 3.2 Session fields
+
+| Field | Source | Mutable? |
+|---|---|---|
+| Start timestamp | **Server clock at start** | **No** — never by the technician |
+| Completion timestamp | **Server clock at end** | **No** — never by the technician |
+| Technician identity | Session owner | No |
+| Project and work-order reference | Derived from assignment | No |
+| Linked progress reports | Reports submitted during the session | Links only |
+| Documentation | Photos and attachments captured | Links only |
+| Status | `ACTIVE`, `COMPLETED`, `CORRECTED`, `ABANDONED` | State machine only |
+
+### 3.3 Session state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: technician starts session (server timestamp)
+    ACTIVE --> COMPLETED: technician ends session (server timestamp)
+    ACTIVE --> ABANDONED: admin closes a forgotten session with reason
+    COMPLETED --> CORRECTED: admin correction with reason
+    ABANDONED --> CORRECTED: admin correction with reason
+    COMPLETED --> [*]
+    CORRECTED --> [*]
+```
+
+| From | To | Trigger | Actor | Rule |
+|---|---|---|---|---|
+| — | `ACTIVE` | Start session | Assigned `TEKNISI` | At most one `ACTIVE` session per technician |
+| `ACTIVE` | `COMPLETED` | End session | Assigned `TEKNISI` | Server writes `ended_at` |
+| `ACTIVE` | `ABANDONED` | Forgotten session closed | `ADMIN`, `SUPER_ADMIN` | Reason mandatory; both timestamps attributed to the correction |
+| `COMPLETED`/`ABANDONED` | `CORRECTED` | Timestamp or attribution corrected | `ADMIN`, `SUPER_ADMIN` | Reason mandatory; **original retained** |
+
+**A session is never deleted.**
+
+### 3.4 Timestamp authority and correction
+
+**The server is authoritative** (FR-TECH-012, BR-TECH-004). Start is written when the technician taps start; completion when they tap end. The technician cannot send a chosen time, and neither value is editable through any route, API, or Blade form. Rendering is `Asia/Jakarta`; storage is UTC with millisecond precision (NFR-OPS-009).
+
+```mermaid
+sequenceDiagram
+    participant T as Technician
+    participant S as System
+    participant A as Admin
+    participant AU as Audit
+    T->>S: Start session
+    S->>S: started_at = server now (UTC)
+    Note over T,S: Technician forgets to end the session
+    A->>S: Open session correction
+    S-->>A: Show original timestamps, read only
+    A->>S: Corrected end time + mandatory reason
+    S->>S: Insert correction record, status CORRECTED
+    S->>AU: Audit event with actor, before and after, reason
+    S-->>T: Session shows corrected values with correction note
+```
+
+The original row keeps its values; the correction is a **new, attributed record**. Reports show both. This is what makes "the technician cannot backdate" a fact rather than a policy statement.
+
+### 3.5 Interaction with status
+
+| Event | Work order | Project |
+|---|---|---|
+| First session starts | `ASSIGNED`/`ACCEPTED` → `IN_PROGRESS` | Unchanged |
+| Session ends | Unchanged | Unchanged |
+| All sessions ended, completion submitted | → `COMPLETED_PENDING_VERIFICATION` | Unchanged |
+| Verification accepted | → `VERIFIED` | May advance when all work orders terminal |
+
+**Ending a session never completes anything.** That is BR-TECH-005, and it is the rule that stops a technician's own click from closing a project.
+
+---
+
+## 4. Technician and team model
 
 | Record | Content |
 |---|---|
-| Technician | Name, phone, active status, skills/categories where known, linked user account |
-| Project assignment | Project, technician, role on project (`TECHNICIAN`/`TEAM_LEADER`), assigned by, assigned at |
-| Work order | One per technician per project (or per phase where distinct), planned dates, scope, status |
+| Technician | Name, phone, active status, skills where known, linked user account |
+| Project member | Project, technician, `is_team_leader` flag, assigned by/at, unassigned at |
+| Work order | One per technician per project (or per phase), planned dates, scope, status |
+| Work session | Start, completion, technician, project, work order |
 
-### 3.2 One or many technicians
+Both assignment extremes are normal (FR-PROJ-007): one technician → one assignment, one work order, sessions as needed; a team of N → N assignments, N work orders, at most one team-leader designation.
 
-Both are normal (FR-PROJ-007):
+Each technician gets their **own** work order even when working the same project on the same day, because completion, daily reports, material custody, and verification are all per-person. A shared work order would make all four impossible.
 
-- **One technician:** one assignment, one work order. No team leader needed.
-- **Team of N:** N assignments, N work orders, at most one team leader.
+**Team-leader designation — not a role** (PRD §4.2, SECURITY §4.1). `project_members.is_team_leader` grants exactly two capabilities on that project:
 
-Each technician gets their **own** work order even when working the same project on the same day. This matters because:
-- Completion is per-person (one may finish, another may not).
-- Daily reports are per-person (accountability).
-- Material issue is per-person (custody).
-- Verification is per-work-order (partial completion).
-
-A shared work order for a team would make all four impossible.
-
-### 3.3 Team leader
-
-**[Proposed]** Designated per project, not a company-wide role (Q-ROLE-01).
-
-| Capability | Team leader (on that project only) |
+| Capability | Granted? |
 |---|---|
-| See all work orders in the project | Yes |
-| See team members' daily reports | Yes |
-| Review/acknowledge reports | Yes (if the review step is enabled) |
-| Verify completion of team members' work | Yes, if not their own work |
-| Issue material to team members | No (office function) |
-| See financial data | **No** |
+| Submit one team-level daily summary | Yes |
+| See teammates' reports and work orders on that project | Yes |
+| Verify a teammate's completion | **No** |
+| Issue material to teammates | **No** (office function) |
+| See financial data / other projects | **No** |
 
-**Rationale:** multi-day, multi-person projects need one accountable person on site. Without a designated lead, the office chases several people for one answer.
-
-**[Open Question] Q-ROLE-01** — if the owner confirms all technicians report directly to the office, keep the lead designation for accountability but disable the review step. The system supports both without schema change.
-
----
-
-## 4. Work-order lifecycle
-
-Statuses defined in [`../PRD.md`](../PRD.md) §9.2, transitions in [`./PROJECT_LIFECYCLE.md`](./PROJECT_LIFECYCLE.md) §5.
-
-```
-DRAFT ──assign──► ASSIGNED ──ack──► ACCEPTED ──start──► IN_PROGRESS
-                                                            │
-                                              ┌─────────────┼─────────────┐
-                                         blocker        complete       (work continues
-                                              │             │          across days)
-                                              ▼             ▼
-                                          BLOCKED   COMPLETED_PENDING_
-                                              │        VERIFICATION
-                                       resolved│              │
-                                              └──► IN_PROGRESS │
-                                                               ├──verify──► VERIFIED
-                                                               └──reject──► IN_PROGRESS
-```
-
-### 4.1 Multi-day behaviour
-
-A five-day job does not produce five work orders. It produces:
-
-- One work order per technician, `IN_PROGRESS` across all five days.
-- One daily report per technician per working day.
-- Progress accumulating from reports, not reset daily.
-
-The work order stays `IN_PROGRESS` until the technician submits completion. Days passing without reports is a signal (see §7.3), not a status change.
-
-### 4.2 Partial completion
-
-FR-TECH-008: `COMPLETED_PENDING_VERIFICATION` is a real state, distinct from `VERIFIED`. This allows:
-
-- One technician on a team to finish while others continue.
-- Office verification to happen the next morning.
-- Verification to reject and return work for rework with a reason.
-
-**The project does not become `COMPLETED` when one work order is verified.** Project status only advances when *all* work orders are terminal (PROJECT_LIFECYCLE §3).
+**[Open Question] Q-ROLE-01** — whether the designation should survive at all. **Proposed default:** keep it for site accountability. **Decision trigger:** Phase 0 — if all technicians report directly to the office, retain the designation but drop the review capability.
 
 ---
 
@@ -168,217 +171,227 @@ FR-TECH-008: `COMPLETED_PENDING_VERIFICATION` is a real state, distinct from `VE
 
 ### 5.1 The core field interaction
 
-This is the screen that determines whether the system is adopted.
-
-**Required fields:**
-
 | Field | Type | Notes |
 |---|---|---|
 | Date | Date, defaults to today | Business date, not timestamp |
 | Project / work order | Pre-selected from assignment | Technician does not search |
-| Work performed | Free text | Must be fast to type; no forced taxonomy |
-| Progress indicator | Selection | See §5.3 |
+| Work session | Pre-selected if active; otherwise optional link | Ties the report to when work happened |
+| Work performed | Free text | Fast to type; no forced taxonomy |
+| Progress indicator | Selection | §5.3 |
 | Material used | Optional, pre-filled from issued material | Technician confirms quantities |
 | Photos | Optional, up to a configured limit | Camera capture or gallery |
 | Blocker | Optional | Reason code + note |
 
-**Design rules:**
-
-1. **Pre-fill everything derivable.** Project, work order, date, issued materials — the technician confirms rather than enters.
-2. **Free text for work performed.** Forcing a dropdown of activity types would produce "other" for everything and add friction.
-3. **Photos must not block submission.** A failed photo upload must not lose the report. Submit the text; retry photos separately.
-4. **Save locally until confirmed.** A dropped connection must not destroy ten minutes of typing.
-5. **No more than one screen of required input.** Anything beyond that gets abandoned.
+**Design rules:** pre-fill everything derivable (project, work order, date, session, issued materials) · free text for work performed — a dropdown of activity types produces "other" for everything · photos must not block submission · preserve the draft locally (FR-PWA-004) · no more than one screen of required input.
 
 ### 5.2 Report lifecycle
 
-| Status | Meaning |
-|---|---|
-| `DRAFT` | Started, not submitted; local only |
-| `SUBMITTED` | Received by server, visible to office |
-| `REVIEWED` | Acknowledged (by office or team leader, if enabled) |
-| `REJECTED` | Returned for correction with a reason |
+`DRAFT` (started; local only until submitted) → `SUBMITTED` (received, visible to office) → `REVIEWED` (acknowledged) or `REJECTED` (returned with a reason).
 
-**BR-TECH-003:** a submitted report is never edited. A correction is a **new version** that supersedes the original; the original remains retrievable. This preserves the record of what was actually reported at the time — which is precisely what WhatsApp scrollback cannot do reliably.
+**BR-TECH-003:** a submitted report is never edited. A correction is a **new version** that supersedes the original; the original remains retrievable — precisely what WhatsApp scrollback cannot do.
+
+**Local draft boundary (FR-PWA-004).** The draft lives in `localStorage`/`IndexedDB` on that device. It is **not** a submitted record, is not visible to the office, and may be lost on logout or device change (**Q-PWA-01**). The UI must say so plainly rather than implying the draft is safe.
 
 ### 5.3 Progress indicator
 
-FR-TECH-010 requires progress to be an **estimate**, not an authoritative measure.
+FR-TECH-010 requires progress to be an **estimate**. Free percentage entry is easy but wildly inconsistent and creates false precision; milestone checklists are consistent but need per-project setup; **coarse bands** (not started / quarter / half / mostly / done) are **[Proposed]** — low friction and honest about imprecision.
 
-| Approach | Assessment |
-|---|---|
-| Free percentage entry (0–100) | Easy to type, wildly inconsistent between technicians, and creates false precision |
-| Milestone checklist per work order | More consistent, requires setup effort per project |
-| Coarse bands (not started / quarter / half / mostly / done) | **Proposed** — low friction, honest about imprecision |
-| Derived from completed checklist items | Best consistency, highest setup cost |
-
-**[Proposed] default:** coarse bands mapped to an internal numeric range, with the raw band shown to users. The system displays progress as "perkiraan" (estimate) with a last-updated timestamp, and never presents it as the authoritative completion measure — that is the verification step.
-
-**Rationale:** percentage entry produces numbers like 73% that imply precision nobody has. Bands are honest, faster to select, and aggregate acceptably for workload reporting. Milestone checklists can be added later for project types where they pay for themselves.
+Progress displays as "perkiraan" (estimate) with a last-updated timestamp, never as the authoritative completion measure — that is the verification step.
 
 ### 5.4 Evidence and photos
 
-| Aspect | Rule |
-|---|---|
-| Storage | Private object storage; never public (FR-DOC-001) |
-| Access | Short-lived signed URL after permission check |
-| Limits | Configurable per-file size and per-report count, enforced **server-side** (FR-TECH-005) |
-| Validation | Content-type sniffing, extension allow-list, image dimension sanity check |
-| Metadata | Uploader, timestamp, content hash, linked to the report |
-| Retention | Follows the project; not deleted while the project exists |
-| Compression | Client-side downscale before upload to respect data plans |
+Private local disk outside the webroot; never public (FR-DOC-001) · served through an authorising route, streamed with `Content-Disposition` (NFR-SEC-010) · configurable per-file size, per-report count, and image dimensions, enforced **server-side** (FR-TECH-005) · MIME sniffing, extension allow-list, dimension sanity check, filename sanitisation · metadata records uploader, timestamp, SHA-256, and the linked report and session · retention follows the project · client-side downscale respects data plans.
 
-**Why photos matter:** they are the evidence that work was done, and they are the single most valuable thing WhatsApp currently provides. Losing that would be a regression. Linking them to a work order — rather than leaving them in a chat — is the improvement.
+Photos are the evidence that work was done and the single most valuable thing WhatsApp provides today. Linking them to a work order and a session — rather than leaving them in a chat — is the improvement.
 
-### 5.5 Blockers and delays
+### 5.5 Blockers
 
-| Reason code | Use |
-|---|---|
-| `MATERIAL_NOT_AVAILABLE` | Expected material absent |
-| `SITE_NOT_READY` | Customer site inaccessible or unprepared |
-| `CUSTOMER_REQUEST` | Customer paused or changed scope |
-| `WEATHER` | Outdoor work prevented |
-| `EQUIPMENT_FAULT` | Tool failure |
-| `ACCESS_DENIED` | Cannot enter site |
-| `OTHER` | With note |
+Reason codes: `MATERIAL_NOT_AVAILABLE` · `SITE_NOT_READY` · `CUSTOMER_REQUEST` · `WEATHER` · `EQUIPMENT_FAULT` · `ACCESS_DENIED` · `OTHER` (with note).
 
-A blocker sets the work order to `BLOCKED` and surfaces it to office staff immediately (FR-TECH-006). Blocked work orders appear in a dedicated office view and in the daily operational summary.
-
-**Why this is a material improvement over WhatsApp:** a blocker buried in a group chat is discovered when someone reads the chat. A blocker in the system is a list item that persists until resolved.
+A blocker sets the work order to `BLOCKED` and surfaces it to office staff immediately (FR-TECH-006), appearing in a dedicated office view and the daily summary. A blocker buried in a group chat is discovered when someone reads the chat; a blocker in the system is a list item that persists until resolved.
 
 ---
 
-## 6. Scheduling and rescheduling
+## 6. Completion submission and verification
 
-### 6.1 Scheduling
+**A technician finishing work does not complete the project** (FR-TECH-013, BR-TECH-005).
 
-| Concept | Behaviour |
-|---|---|
-| Planned start / target completion | On the project |
-| Per-technician planned dates | On the work order |
-| Multi-day span | Work order covers the span; daily reports mark actual work days |
-| Conflict detection | **[Proposed]** warn when a technician is assigned to overlapping projects; do not block (small teams double up deliberately) |
+```mermaid
+sequenceDiagram
+    participant T as Technician
+    participant S as System
+    participant A as Admin
+    T->>S: Submit completion report with documentation
+    S->>S: work order = COMPLETED_PENDING_VERIFICATION
+    S->>A: Item appears in verification queue
+    A->>S: Review report, photos, material accountability, blockers
+    alt Admin verifies
+        A->>S: Outcome VERIFIED
+        S->>S: work order = VERIFIED, audit event
+        S->>S: Project may advance if all work orders terminal
+    else Admin returns for correction
+        A->>S: Outcome RETURNED_FOR_CORRECTION with mandatory reason
+        S->>S: work order = IN_PROGRESS, audit event
+        S-->>T: Notification with the reason
+    end
+```
 
-**[Proposed]** conflict warning rather than hard block: with 15 technicians and urgent jobs, the owner sometimes knowingly double-books. A hard block would be overridden constantly and would train users to ignore warnings.
+| Outcome | Effect | Reason required |
+|---|---|---|
+| `VERIFIED` | Work order → `VERIFIED`; project may advance | No |
+| `RETURNED_FOR_CORRECTION` | Work order → `IN_PROGRESS`; technician sees why | **Yes** |
 
-### 6.2 Rescheduling
+Both outcomes are audited with actor, timestamp, and outcome (PRD §9.15).
 
-FR-TECH-007: changing planned dates requires a reason and is recorded. The work order keeps its history; the previous dates are not overwritten.
+**Verification guidance** (not enforced fields): work matches scope, photos present, material accounted for, no unresolved blocker, sessions recorded for the reported work.
 
-### 6.3 Reassignment
+**BR-TECH-002:** the verifier must not be the technician who completed the work. If the only available verifier is that technician, an override with reason is required and appears in the `PEMILIK` override report.
 
-Moving a work order to a different technician:
-
-- Requires a reason.
-- The new technician sees it; the old one loses access.
-- **Material issued to the previous technician does not automatically transfer.** Custody is per-person. The office must record a return from the old technician and an issue to the new one, or an explicit custody transfer. Silently moving custody would break the material ledger's accountability.
-
-This is a deliberate friction point. It reflects reality: material physically held by one person does not teleport when a task is reassigned.
+**Multi-day and partial completion:** a five-day job produces **one** work order per technician, `IN_PROGRESS` across all days, with multiple sessions and daily reports. One technician may reach `COMPLETED_PENDING_VERIFICATION` while others continue; the project stays `IN_PROGRESS`. **The project does not become `COMPLETED` when one work order is verified** — only when all are terminal.
 
 ---
 
-## 7. Office oversight
+## 7. Scheduling, rescheduling, reassignment
 
-### 7.1 Daily operational view
+Per-technician planned dates sit on the work order; the project carries the span. **[Proposed]** warn when a technician is assigned to overlapping projects but do not block — with 15 technicians and urgent jobs the owner sometimes knowingly double-books, and a hard block would be overridden constantly and train users to ignore warnings.
 
-| Element | Purpose |
+**Rescheduling** (FR-TECH-007) requires a reason and is recorded; previous dates are not overwritten.
+
+**Reassignment** requires a reason; the new technician sees it and the old one loses access. **Material issued to the previous technician does not automatically transfer** — custody is per-person, so the office records a return and a new issue, or an explicit custody transfer. Silently moving custody would break the ledger's accountability. This friction reflects reality: material held by one person does not teleport when a task is reassigned.
+
+**Open sessions on reassignment:** an `ACTIVE` session must be ended or abandoned first, otherwise it would outlive the technician's access.
+
+---
+
+## 8. Office oversight
+
+| View | Purpose |
 |---|---|
 | Work orders active today | Who is where |
+| **Sessions active now** | Who is currently working, and since when |
 | Work orders with no report today | Early warning of silence |
 | Blocked work orders | Needs action |
 | Awaiting verification | Office work queue |
 | Projects starting/ending this week | Planning |
+| **Forgotten sessions** | Active longer than a configurable threshold |
 
-### 7.2 Verification queue
+**[Proposed] detection:** a work order `IN_PROGRESS` with no daily report for a configurable period (default one working day) appears in an exception list; a session `ACTIVE` beyond a threshold (default 12 hours) appears in a separate list.
 
-FR-TECH-008: office reviews `COMPLETED_PENDING_VERIFICATION` work orders and either verifies or returns for rework with a reason.
-
-Verification checks (guidance, not enforced fields): work performed matches scope, photos present, material accounted for, no unresolved blocker.
-
-**BR-TECH-002:** the verifier must not be the technician who completed the work. If the only available verifier is that technician, an override with reason is required and appears in the owner's override report.
-
-### 7.3 Silence detection
-
-**[Proposed]** A work order `IN_PROGRESS` with no daily report for a configurable period (default: one working day) appears in an exception list.
-
-**Rationale:** the current failure mode is not wrong reports — it is *no* reports, discovered days later. Silence detection converts an invisible problem into a visible one. It is a report, not an automatic status change; the office decides what it means.
+**Rationale:** the current failure mode is not wrong reports — it is *no* reports, discovered days later. Detection converts an invisible problem into a visible one. It is a report, not an automatic status change; the office decides what it means.
 
 ---
 
-## 8. Access scope
+## 9. WhatsApp report preparation
 
-FR-TECH-009 and NFR-SEC-006 are absolute:
+**MVP = prefilled message, technician reviews and sends manually** (FR-WA-001…003). No automatic group posting, no delivery claims, no WhatsApp Business API.
+
+```mermaid
+sequenceDiagram
+    participant T as Technician
+    participant S as System
+    participant WA as WhatsApp app
+    T->>S: Open assigned project, tap prepare report
+    S->>S: Compose text: status, work date, progress, blockers, doc numbers
+    S-->>T: Show composed text for review
+    T->>S: Confirm send
+    S->>S: Build wa.me URL with encodeURIComponent
+    S->>WA: Open URL
+    alt WhatsApp available
+        T->>WA: Select destination manually and send
+        S->>S: Record report prepared (not message sent)
+    else Cannot open WhatsApp
+        S-->>T: Show text with copy to clipboard and instructions
+    end
+```
+
+| Included | Excluded |
+|---|---|
+| Current project and work-order status | Any invoice amount, payment, or margin figure |
+| Work date and progress summary (estimate) | Internal URLs requiring authentication |
+| Blockers | Private storage links |
+| Documentation references as **human-readable document numbers** | Any credential or token |
+
+**URL construction:** `https://wa.me/?text=` with `encodeURIComponent`; practical length limit roughly **2000 characters** — the composed text is truncated with a visible notice rather than silently cut. The destination is **selected manually** by default (**Q-WA-01**; proposed default: manual, because group IDs are not reliably available without the Business API).
+
+**Semantics:** the system records "report prepared" with a timestamp and content hash. It never claims "message sent", delivery, or a read receipt. An optional "mark as sent" is an **unverified self-declaration** and must be labelled as such. When WhatsApp cannot be opened — no app, desktop browser, popup blocked — the composed text is shown with a **copy-to-clipboard fallback and instructions**; the system never fails silently.
+
+---
+
+## 10. Maps for field work
+
+OpenStreetMap tiles via Leaflet when coordinates exist, with visible attribution (FR-MAP-001) · no coordinates → address plus a placeholder, never an error or blank frame · "Open directions" launches a Google Maps URL with **no API key** (FR-MAP-002) · **routing is not in scope** — OSM tiles carry no routing engine · no bulk downloading, no heavy caching, configurable tile source (FR-MAP-003, Q-MAP-01) · coordinates are business-confidential and reach a third party only when the technician taps the directions link.
+
+---
+
+## 11. Access scope
+
+FR-TECH-009 and NFR-SEC-006 are absolute.
 
 | A technician can | A technician cannot |
 |---|---|
-| See their own assigned projects and work orders | See other technicians' assignments |
-| Submit their own daily reports | See any invoice, payment, or supplier data |
-| Upload photos to their own reports | See company-wide reports |
-| See materials issued to them | Approve purchases or issue documents |
-| Record consumption/return of their own issued material | Change project status |
-| Update their own contact details (if enabled) | See other technicians' personal data |
+| See own assigned projects and work orders | See other technicians' assignments |
+| Start and end own work sessions | Alter any session timestamp |
+| Submit own daily reports and uploads | See any invoice, payment, supplier, or settings data |
+| See materials issued to them | See company-wide reports |
+| Record consumption/return of own issued material | Approve purchases or issue documents |
+| Raise an additional material request on own project | Change project status |
+| Prepare a WhatsApp report for own project | Verify own completion |
+| — | See other technicians' personal data |
 
-**Structural enforcement:** technician-facing queries are dedicated scoped functions, not general queries with an optional filter (SECURITY §4). A missing filter must be impossible, not merely unlikely.
-
-**Why this matters beyond principle:** a technician seeing invoice values would learn the company's margins on their own work. That is a real, immediate commercial risk in a 15-person team, not a hypothetical privacy concern.
-
----
-
-## 9. Reporting
-
-| Report | Content | Requirement |
-|---|---|---|
-| Daily progress per project | All reports for a date, grouped by project | FR-RPT-001 |
-| Daily progress per technician | That technician's reports | FR-RPT-001 |
-| Workload | Assignments, scheduled days, open and blocked work orders | FR-RPT-006 |
-| Completion status | Work orders by status per project | FR-RPT-002 |
-| Silence exceptions | Work orders with no recent report | §7.3 |
-| Material custody | Material issued per technician, outstanding | FR-RPT-003 |
-
-Reports must be readable on a phone (FR-RPT-001) and exportable (FR-RPT-007).
+**Structural enforcement:** technician-facing queries are dedicated scoped functions, not general queries with an optional filter (SECURITY §4). A missing filter must be impossible, not merely unlikely. A technician seeing invoice values would learn the company's margins on their own work — a real commercial risk in a 15-person team.
 
 ---
 
-## 10. Failure behaviours
-
-Explicit, because field conditions are hostile:
+## 12. Failure behaviours
 
 | Failure | Required behaviour |
 |---|---|
 | Photo upload fails | Report submits; photo marked failed with retry; no data loss |
-| Connection drops mid-form | Entered data preserved locally; resubmission offered on reconnect |
-| Duplicate submission (double tap) | Idempotent; one report created |
-| Report submitted for wrong date | New version supersedes; original retained (BR-TECH-003) |
-| Technician unassigned after starting work | Reports already submitted remain; access to the work order ends |
-| Material issue disputed by technician | Office records adjustment with reason; audit trail shows both |
+| Connection drops mid-form | Draft preserved locally; resubmission offered; the draft is not a submitted record |
+| Duplicate submission (double tap) | Idempotent; one report created (Turbo handlers must not double-bind — ARCHITECTURE §3.2) |
+| Report submitted for the wrong date | New version supersedes; original retained (BR-TECH-003) |
+| Technician forgets to end a session | Forgotten-session list; `ADMIN` closes it as `ABANDONED` with reason; original timestamps retained |
+| Technician attempts to backdate a session | Refused — the field is server-written and absent from every form |
+| Technician unassigned after starting work | Submitted reports remain; an active session must be closed first |
+| Material issue disputed by technician | Office records an adjustment with reason; audit shows both |
 | Work order verified then found incomplete | New work order created linked to the project; verified record stands |
+| WhatsApp cannot open | Composed text with copy fallback and instructions |
 
 **No failure may result in silent data loss.** That is the minimum standard, and it is the standard WhatsApp fails at.
 
 ---
 
-## 11. Acceptance criteria references
+## 13. Acceptance criteria references
 
 | Behaviour | AC |
 |---|---|
-| Technician record linked to exactly one user | AC-TECH-001 |
-| Team leader designation scoped to project | AC-TECH-002 |
+| Technician linked to exactly one user | AC-TECH-001 |
+| Team-leader designation scoped, two capabilities only | AC-TECH-002 |
 | One work order per technician | AC-TECH-003 |
-| Daily report in < 3 minutes on 360 px | AC-TECH-004 |
+| Daily report in < 3 minutes at 360 px | AC-TECH-004 |
 | Photo upload with server-side limits | AC-TECH-005 |
 | Blocker recorded and surfaced | AC-TECH-006 |
-| Reschedule/reassign recorded with reason | AC-TECH-007 |
-| Partial completion and rejection for rework | AC-TECH-008 |
+| Reschedule/reassign recorded; custody not auto-transferred | AC-TECH-007 |
+| Partial completion and return for correction | AC-TECH-008 |
 | Technician sees only own assignments | AC-TECH-009 |
 | Progress presented as estimate | AC-TECH-010 |
+| **Many sessions per project; one start per project insufficient** | AC-TECH-011 |
+| **Session timestamps immutable; correction audited with reason** | AC-TECH-012 |
+| **Verification decision audited; return requires a reason** | AC-TECH-013 |
+| WhatsApp text correct, encoded, no financial data | AC-WA-001, AC-WA-002 |
+| Manual send semantics; prepared ≠ sent; copy fallback | AC-WA-003 |
+| Map placeholder without coordinates; directions link | AC-MAP-001, AC-MAP-002 |
+| Local draft preserved on interruption, never submitted | AC-PWA-004 |
 | Multiple technicians on one project | AC-PROJ-007 |
 | Multi-day reports accumulate | AC-PROJ-006 |
 
 ---
 
-## 12. Cross-references
+## 14. Cross-references
 
 - Work-order state machine: [`./PROJECT_LIFECYCLE.md`](./PROJECT_LIFECYCLE.md) §5
 - Material issue/return: [`./PROCUREMENT_AND_MATERIALS.md`](./PROCUREMENT_AND_MATERIALS.md) §6
 - Permissions: [`../architecture/SECURITY_AND_ACCESS_CONTROL.md`](../architecture/SECURITY_AND_ACCESS_CONTROL.md) §3, §4
-- Mobile performance targets: [`../PRD.md`](../PRD.md) NFR-OPS-003, NFR-OPS-004
+- Session entities: [`../architecture/DATA_MODEL.md`](../architecture/DATA_MODEL.md) §4
+- Turbo initialisation: [`../architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md) §3.2
+- Mobile targets: [`../PRD.md`](../PRD.md) NFR-OPS-003, NFR-OPS-004

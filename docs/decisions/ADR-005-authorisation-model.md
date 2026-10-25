@@ -1,25 +1,28 @@
-# ADR-005 — Authorisation model: roles, scopes, and logged overrides
+# ADR-005 — Authorisation model: four roles, scopes, and logged overrides
 
 | Field | Value |
 |---|---|
-| Status | **Proposed** |
+| Status | **Accepted (design) — rewritten 2026-10-25 for the four-role model** |
 | Date | 2026-10-25 |
+| Revision | Rev 2 — role set replaced; decision structure retained |
 | Deciders | Business owner, technical lead |
 | Related | [`../architecture/SECURITY_AND_ACCESS_CONTROL.md`](../architecture/SECURITY_AND_ACCESS_CONTROL.md), ADR-004 |
+
+> **Revision note.** Rev 1 defined five roles: `OWNER`, `OPS_ADMIN`, `FINANCE`, `TECHNICIAN`, `TEAM_LEADER`. The client has fixed the role set at exactly four: `SUPER_ADMIN`, `PEMILIK`, `ADMIN`, `TEKNISI`. This revision replaces the role set and its permission consequences. The **mechanism** — permissions as data, structural scoping, logged overrides — is unchanged, because it was never role-specific.
 
 ---
 
 ## Context
 
-**[Confirmed]** There are ~3 office employees and ~15 technicians. The brief explicitly warns that:
+**[Confirmed]** ~3 office employees and ~15 technicians. The brief states:
 
-- Not all technicians need identical access.
-- Not every office employee has the same responsibilities.
-- The owner approves purchases and may personally transfer funds.
+- Not all technicians need identical access; not every office employee has the same responsibilities.
+- **The owner approves every purchase** and may personally transfer funds.
+- A system administrator role exists for users, settings, numbering, mail, and company profile.
 
-**[Assumption]** At least one person will hold both operations and finance responsibilities, because three people cannot staff four distinct functions.
+**[Assumption]** At least one person will hold both `SUPER_ADMIN` and `ADMIN`, because three people cannot staff four distinct functions.
 
-This creates a genuine tension. Standard practice says separate duties: the person who approves spending should not be the person who pays, and the person who verifies work should not be the person who did it. But with three office staff, enforcing four-eyes control everywhere would stall the business in its first week — and a control that stops work gets bypassed informally, which is worse than no control because it is invisible.
+This creates genuine tension. Standard practice separates duties: the approver should not be the payer, and the verifier should not be the doer. But with three office staff, enforcing four-eyes control everywhere would stall the business in its first week — and a control that stops work gets bypassed informally, which is worse than no control because it is invisible.
 
 ---
 
@@ -27,31 +30,48 @@ This creates a genuine tension. Standard practice says separate duties: the pers
 
 ### D1 — Permissions are data, keyed by action and resource
 
-Permissions are `resource.action` codes stored in tables (`permissions`, `role_permissions`, `user_roles`). Code evaluates `can(user, action, resource)`. No `if role === 'owner'` branching in business logic.
+Permissions are `resource.action` codes stored in tables (`permissions`, `role_permissions`, `user_roles`). Code evaluates a policy. No role-name branching in business logic.
 
-### D2 — Five roles, combinable per user
+### D2 — Exactly four roles, combinable per user
 
-`OWNER`, `OPS_ADMIN`, `FINANCE`, `TECHNICIAN`, `TEAM_LEADER`. A user may hold several; effective permissions are the union.
+| Role | Defines |
+|---|---|
+| `SUPER_ADMIN` | Full application access **plus** system administration: users, roles, settings, SMTP, numbering configuration, company profile, bank accounts |
+| `PEMILIK` | Business authority and the **mandatory purchase approver**; no system configuration |
+| `ADMIN` | Full operational access including purchasing **preparation**; **no approval authority** |
+| `TEKNISI` | Assignment-scoped operational access only |
 
-### D3 — Technician access is assignment-scoped, structurally
+### D3 — `FINANCE` is not a role
 
-Technician-facing queries are dedicated scoped functions that cannot return unassigned rows. Not general queries with an optional filter.
+Its capabilities are now granular permissions (`invoice.issue`, `payment.record`, `payment.confirm`, `payable.record`, `report.finance`) granted to `ADMIN` and/or `SUPER_ADMIN`. Financial authority is expressed through **permissions plus approval requirements plus audit**, never a role name.
 
-### D4 — Team leader is a per-project designation, not a company role
+This is an improvement over Rev 1: with `FINANCE` removed, the hard rule "`OPS_ADMIN` cannot issue invoices" became unnecessary. `ADMIN` may now issue invoices — an operational document act — while remaining unable to approve a purchase, which is the spending decision that needs separation.
 
-Granted through `project_assignments.role_on_project`, scoped to that project's team. Avoids inventing an org chart the business may not have.
+### D4 — `TEAM_LEADER` is not a role
 
-### D5 — Separation of duties where practical; logged override where not
+Team leadership is `project_members.is_team_leader` plus two narrowly scoped permissions: submit a team-level daily summary, and view that project's team reports. No financial access, no material-issue authority, no verification authority, no company-wide read. If it later proves a distinct function, that may justify a fifth role — **Q-ROLE-01**, explicitly not decided here.
 
-Conflicting permission pairs (approve+pay, record+confirm, verify own work, issue+void) are blocked by default. When one person must hold both, the action requires an **override**: mandatory reason, recorded, surfaced in an owner report.
+### D5 — Technician access is assignment-scoped, structurally
 
-### D6 — Override bypasses authorisation conflicts, never data invariants
+Technician-facing queries are dedicated scoped functions that cannot return unassigned rows — not general queries with an optional filter.
 
-An override may permit a person to approve their own request. It may never permit a duplicate document number, an over-reservation, or an edit to an issued invoice.
+### D6 — Separation of duties where practical; logged override where not
 
-### D7 — Server-side enforcement at two layers
+Conflicting pairs are blocked by default: record + confirm a payment, issue + void an invoice, verify one's own work, record a payable + pay it. When one person must hold both, the action requires an **override**: mandatory reason, recorded, surfaced to `PEMILIK`.
 
-Application-layer policy check plus row-scoped data access. UI hiding is not a control.
+### D7 — Override bypasses authorisation conflicts, never invariants, never purchase approval
+
+An override may permit confirming a payment one recorded. It may never permit a duplicate number, an over-reservation, an edited issued document, a backdated session timestamp, **or a PO without `PEMILIK` approval**.
+
+**D7 is narrower than in Rev 1**, which allowed an override to permit approving one's own purchase request on the reasoning that a three-person office cannot avoid it. The client has since stated that `PEMILIK` approval is mandatory for **every** purchase, converting the rule from an overridable authorisation conflict into a non-overridable business control. `ADMIN` no longer holds `purchase.approve` at all, so no conflict remains to override — the separation is structural rather than compensatory.
+
+### D8 — Administrative privilege is not financial authority
+
+`SUPER_ADMIN` does **not** hold `purchase.approve`. This is the single most important cell in the matrix: whoever can change every setting still cannot commit company money.
+
+### D9 — Server-side enforcement at two layers
+
+Application-layer policy plus row-scoped data access. UI hiding is not a control.
 
 ---
 
@@ -59,50 +79,38 @@ Application-layer policy check plus row-scoped data access. UI hiding is not a c
 
 ### Positive
 
-- **Technician isolation is structural**, not a filter that someone might forget.
-- **The small-team reality is acknowledged honestly.** Rather than pretending four-eyes control exists, the system makes every bypass visible and attributable.
-- **Control shifts from prevention to detection**, which is the only workable model at this scale — and detection requires the owner to look, which is why the override report is a first-class deliverable.
+- **Technician isolation is structural**, not a filter someone might forget.
+- **The small-team reality is acknowledged honestly** — every remaining bypass is visible and attributable.
+- **Purchase approval is stronger than in Rev 1** — not an overridable conflict, but a permission only `PEMILIK` holds.
+- **Removing `FINANCE` simplified the model without weakening separation**, because the separation that matters (spending vs operations) is preserved.
 - **Roles can be recombined** as staffing changes without schema change.
-- **Auditability is complete** for every privileged action.
 
 ### Negative
 
-- **The owner can do anything.** No technical control exists above `OWNER`. Inherent to an owner-operated business.
-- **Override is available, so it will be used.** Mitigated by mandatory reasons, owner visibility, and override-frequency reporting; not eliminated.
-- **No delegation.** If the owner is unavailable, approvals wait.
-- **Union of permissions can produce unexpected combinations.** Mitigated by explicit conflict-pair rules that apply regardless of how roles were combined.
+- **`SUPER_ADMIN` can do almost anything operational.** Protections are audit, the invariant boundary, and the absence of approval authority. Inherent to an owner-operated business with an administrator.
+- **Override is available, so it will be used.** Mitigated by mandatory reasons, `PEMILIK` visibility, and override-frequency reporting; not eliminated.
+- **No delegation of purchase approval.** If the owner is unavailable, purchases wait — a client-stated consequence, not an oversight.
+- **`SUPER_ADMIN` and `ADMIN` may be the same person.** The model supports it; audit and override make it survivable.
+- **Four roles are fewer than five**, so some previously distinct bundles are now permission subsets. More flexible, but a permission grant must be reviewed rather than assumed.
 
 ### Neutral
 
-- Role names are job-adjacent but not job-identical. A person's title does not determine their permissions; their assigned roles do.
+- Role names are job-adjacent but not job-identical. A title does not determine permissions; assigned roles do.
 
 ---
 
 ## Alternatives considered
 
-### Alternative A — Strict separation of duties with no override
-
-**Rejected.** With three office staff, this blocks legitimate work. The predictable outcome is shared accounts or work performed outside the system — both worse than a logged override, because both destroy attribution entirely.
-
-### Alternative B — Role checks hard-coded in the UI
-
-**Rejected.** Direct API calls bypass it. Hiding a button is a usability decision, not a security control (NFR-SEC-002).
-
-### Alternative C — Single admin role for all office staff
-
-**Rejected.** Gives the office administrator invoice-issuance and payment-confirmation rights. Invoicing is a financial and legal act; the strongest available separation in a small team is to keep it with finance/owner.
-
-### Alternative D — Per-user granular permissions without roles
-
-**Rejected.** With ~18 users, per-user permissions become unmaintainable and unauditable. Roles provide a reviewable bundle; individual grants can be added where genuinely needed.
-
-### Alternative E — Team leader as a company-wide role
-
-**Rejected.** Would grant review rights over every project, which is broader than the operating model justifies. Per-project designation is narrower and matches how the owner actually assigns work.
-
-### Alternative F — Attribute-based access control (ABAC)
-
-**Rejected for MVP.** Powerful but requires a policy language, testing strategy, and expertise the project does not have. Role + scope + override covers the confirmed needs.
+| Alternative | Verdict |
+|---|---|
+| Strict separation of duties, no override | **Rejected** — blocks legitimate work in a 3-person office; the predictable outcome is shared accounts or work outside the system, both destroying attribution |
+| Role checks hard-coded in the UI | **Rejected** — direct requests bypass them |
+| Single admin role for all office staff | **Rejected** — would give the administrator purchase-approval rights |
+| Per-user permissions without roles | **Rejected** — unmaintainable at ~18 users |
+| Retain `FINANCE` as a role | **Rejected by client instruction.** It also implied a separation that did not exist in a three-person office |
+| Retain `TEAM_LEADER` as a role | **Rejected** — a company-wide role grants review rights over every project |
+| Give `SUPER_ADMIN` approval authority | **Rejected** — collapses the only separation the client asked for |
+| ABAC | **Rejected for MVP** — needs a policy language and expertise the project lacks |
 
 ---
 
@@ -112,14 +120,17 @@ Application-layer policy check plus row-scoped data access. UI hiding is not a c
 |---|---|---|
 | V1 | Technician direct-requests another's work order | 403/404, no existence leak — AC-TECH-009 |
 | V2 | Technician requests invoice list | 403 — AC-SEC-006 |
-| V3 | OPS_ADMIN issues invoice | 403 — AC-SEC-002 |
-| V4 | FINANCE approves purchase | 403 — AC-SEC-002 |
-| V5 | Multi-role union applies correctly | AC-SEC-003 |
-| V6 | Override without reason refused | AC-AUD-004 |
-| V7 | Override appears in owner report | AC-AUD-004 |
-| V8 | Override cannot bypass a constraint | AC-MATL-006, AC-DOC-004 |
+| V3 | `ADMIN` attempts to approve a purchase | 403 — AC-PROC-011 |
+| V4 | `SUPER_ADMIN` attempts to approve a purchase | 403 — AC-PROC-011 |
+| V5 | `PEMILIK` attempts SMTP or numbering configuration | 403 — AC-SEC-002 |
+| V6 | Multi-role union applies correctly | AC-SEC-003 |
+| V7 | Override without a reason refused | AC-AUD-004 |
+| V8 | Override appears in the `PEMILIK` report | AC-AUD-004 |
+| V9 | Override cannot bypass a constraint | AC-MATL-006, AC-DOC-004 |
+| V10 | Override cannot waive purchase approval | AC-PROC-011 |
+| V11 | Override cannot backdate a session timestamp | AC-TECH-012 |
 
-**V8 is the boundary that must never erode.** An override that can bypass a database constraint converts a controlled exception into a data-integrity hole.
+**V9, V10, and V11 are the boundary that must never erode.** An override that can bypass a database constraint, the client's approval rule, or timestamp authority converts a controlled exception into a data-integrity hole.
 
 ---
 
@@ -127,7 +138,17 @@ Application-layer policy check plus row-scoped data access. UI hiding is not a c
 
 | ID | Question | Default |
 |---|---|---|
-| Q-ROLE-01 | Does a team leader role exist in practice, and do they review reports? | Per-project designation, review step optional |
-| Q-SEC-01 | Should the owner be able to delegate approval temporarily? | No in MVP; documented as operational risk |
-| Q-SEC-02 | Should `audit.view` be grantable beyond the owner? | No by default |
-| Q-SEC-03 | Is MFA required for owner accounts? | Out of scope for MVP; session model must not preclude it |
+| Q-ROLE-01 | Does the team-leader designation stay useful, and should it ever become a role? | Keep as a per-project designation; a future role is not decided |
+| Q-FIN-04 | Does `PEMILIK` perform financial actions beyond approval, and which destructive actions are prohibited? | May record and confirm payments and view all reports; prohibited: editing issued documents, deleting audit records, altering numbering history |
+| Q-SEC-04 | Temporary delegation of approval? | No in MVP; documented as an operational risk |
+| Q-SEC-02 | `audit.view` beyond `PEMILIK` and `SUPER_ADMIN`? | No by default |
+| Q-SEC-03 | MFA for owner and administrator accounts? | Out of scope for MVP; session model must not preclude it |
+
+---
+
+## Cross-references
+
+- Permission matrix: [`../architecture/SECURITY_AND_ACCESS_CONTROL.md`](../architecture/SECURITY_AND_ACCESS_CONTROL.md) §3.2
+- Roles in the PRD: [`../PRD.md`](../PRD.md) §4
+- Audit and overrides: [`../standards/AUDIT_LOGGING.md`](../standards/AUDIT_LOGGING.md) §7
+- Purchase approval rule: [`../workflows/PROCUREMENT_AND_MATERIALS.md`](../workflows/PROCUREMENT_AND_MATERIALS.md) §8
